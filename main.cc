@@ -8,7 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-const size_t num_particles = 100000;
+const size_t num_particles = 20000;
 
 const GLchar* vertex_shader = R"SHADER(
 #version 430
@@ -64,12 +64,44 @@ layout(std430, binding=1) buffer velocities
 };
 
 uniform float elapsed_time;
+uniform bool flip;
 
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
-    uint gid = gl_GlobalInvocationID.x;
-    p[gid].pos.xyz += v[gid].xyz * elapsed_time;
+    uint N = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    uint idx = gl_GlobalInvocationID.x;
+    vec3 acc = vec3(0, 0, 0);
+
+    if (flip)
+    {
+        for (int i = 0; i < N; i += 2)
+            if (i != idx)
+            {
+                float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
+                acc += 40 * normalize(p[i].pos.xyz - p[idx].pos.xyz) * 0.1 / (dist * dist);
+                if (length(acc) > 1.0)
+                    acc = normalize(acc);
+            }
+        v[idx].xyz += acc * elapsed_time;
+        p[idx].pos.xyz += v[idx].xyz * elapsed_time;
+       // p[idx].color.xyz = mix(vec3(0, 0, 1), vec3(1, 0, 0), length(normalize(acc)));
+    }
+    else
+    {
+        for (int i = 1; i < N; i += 2)
+            if (i != idx)
+            {
+                float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
+                acc += 40 * normalize(p[i].pos.xyz - p[idx].pos.xyz) * 0.1 / (dist * dist);
+                if (length(acc) > 1.0)
+                    acc = normalize(acc);
+
+            }
+        v[idx].xyz += acc * elapsed_time;
+        p[idx].pos.xyz += v[idx].xyz * elapsed_time;
+    //    p[idx].color.xyz = mix(vec3(0, 0, 1), vec3(1, 0, 0), length(normalize(acc)));
+    }
 }
 )SHADER";
 
@@ -86,7 +118,7 @@ int main()
     settings.stencilBits = 8;
     settings.antialiasingLevel = 2;
 
-    sf::Window window{sf::VideoMode{800, 600}, "OpenGL", sf::Style::Close, settings};
+    sf::Window window{sf::VideoMode{1280, 1024}, "OpenGL", sf::Style::Close, settings};
 
 
     glewExperimental = GL_TRUE;
@@ -110,8 +142,9 @@ int main()
 
     for (size_t i = 0; i < num_particles; ++i)
     {
-        positions[i].pos = glm::gaussRand(glm::vec4(0), glm::vec4(0.7));
-        positions[i].color = glm::linearRand(glm::vec4(0), glm::vec4(1));
+        positions[i].pos = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(0.7)), 0.f);
+        //positions[i].color = glm::linearRand(glm::vec4(0), glm::vec4(1));
+        positions[i].color = glm::vec4(0.2, 0.1, 0.01, 1.0);
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
@@ -124,7 +157,7 @@ int main()
                                                         0, num_particles * sizeof (glm::vec4),
                                                         GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
     for (size_t i = 0; i < num_particles; ++i)
-        velocities[i] = glm::linearRand(glm::vec4(0), glm::vec4(1));
+        velocities[i] = glm::vec4(glm::linearRand(glm::vec3(0), glm::vec3(1)), 0);
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 
@@ -217,14 +250,18 @@ int main()
     GLint uni_view = glGetUniformLocation(render_program, "view");
     glUniformMatrix4fv(uni_view, 1, GL_FALSE, glm::value_ptr(view));
     sf::Clock clock;
-    int i = 0;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthFunc(GL_ALWAYS);
+
+    int flip = 0;
     while (window.isOpen())
     {
-        std::cout << i++ << std::endl;
 
         sf::Time elapsed = clock.restart();
 
-        //std::cout << 1.f / elapsed.asSeconds() << std::endl;
+        std::cout << 1.f / elapsed.asSeconds() << std::endl;
 
         if (auto bite = glGetError())
         {
@@ -234,6 +271,9 @@ int main()
         glUseProgram(compute_program);
         GLint uni_time = glGetUniformLocation(compute_program, "elapsed_time");
         glUniform1f(uni_time, elapsed.asSeconds());
+        flip != flip;
+        GLint uni_flip = glGetUniformLocation(compute_program, "flip");
+        glUniform1i(uni_flip, flip);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbos[0]);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbos[1]);
         glDispatchCompute((num_particles / 256) + 1, 1, 1);
@@ -243,9 +283,9 @@ int main()
         glUseProgram(render_program);
         view = glm::rotate(view, elapsed.asSeconds(), glm::vec3(0.f, 0.f, 1.f));
         GLint uni_view = glGetUniformLocation(render_program, "view");
-        glUniformMatrix4fv(uni_view, 1, GL_FALSE, glm::value_ptr(view));
+        //glUniformMatrix4fv(uni_view, 1, GL_FALSE, glm::value_ptr(view));
         glClearColor(0.f, 0.f, 0.f, 0.f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnableClientState(GL_VERTEX_ARRAY);
         glDrawArrays(GL_POINTS, 0, num_particles);
         glDisableClientState(GL_VERTEX_ARRAY);
