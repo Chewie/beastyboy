@@ -28,18 +28,45 @@ void main()
 }
 )SHADER";
 
+const GLchar* geometry_shader = R"SHADER(
+#version 430
+
+layout(points) in;
+layout(triangle_strip, max_vertices = 6) out;
+
+in vec4 Color[];
+out vec4 fcolor;
+
+void main()
+{
+    fcolor = Color[0];
+    gl_Position = gl_in[0].gl_Position + vec4(-0.01, 0, 0, 0);
+    EmitVertex();
+    gl_Position = gl_in[0].gl_Position + vec4(0.01, 0, 0, 0);
+    EmitVertex();
+    gl_Position = gl_in[0].gl_Position + vec4(0, -0.01, 0, 0);
+    EmitVertex();
+    gl_Position = gl_in[0].gl_Position + vec4(0, 0.01, 0, 0);
+    EmitVertex();
+    gl_Position = gl_in[0].gl_Position + vec4(0, 0.01, 0, 0);
+    EmitVertex();
+    gl_Position = gl_in[0].gl_Position + vec4(0, -0.01, 0, 0);
+    EmitVertex();
+    EndPrimitive();
+}
+)SHADER";
+
 const GLchar* fragment_shader = R"SHADER(
 #version 430
 
-in vec4 Color;
+in vec4 fcolor;
 out vec4 outColor;
 
 void main()
 {
-    outColor = vec4(Color.xyz, 1.0);
+    outColor = vec4(fcolor.xyz, 1.0);
 }
 )SHADER";
-
 
 
 const GLchar* compute_shader = R"SHADER(
@@ -73,15 +100,17 @@ void main()
     uint idx = gl_GlobalInvocationID.x;
     vec3 acc = vec3(0, 0, 0);
 
+    // Double buffering hack
     if (flip)
     {
         for (int i = 0; i < N; i += 2)
             if (i != idx)
             {
                 float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
-                acc += 40 * normalize(p[i].pos.xyz - p[idx].pos.xyz) * 0.1 / (dist * dist);
-                if (length(acc) > 1.0)
-                    acc = normalize(acc);
+                acc += 100 * normalize(p[i].pos.xyz - p[idx].pos.xyz) / (dist * dist);
+                // Clamping for when particles are too close
+                if (length(acc) > 2.0)
+                    acc = normalize(acc) * 2.0;
             }
         v[idx].xyz += acc * elapsed_time;
         p[idx].pos.xyz += v[idx].xyz * elapsed_time;
@@ -93,9 +122,9 @@ void main()
             if (i != idx)
             {
                 float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
-                acc += 40 * normalize(p[i].pos.xyz - p[idx].pos.xyz) * 0.1 / (dist * dist);
-                if (length(acc) > 1.0)
-                    acc = normalize(acc);
+                acc += 100 * normalize(p[i].pos.xyz - p[idx].pos.xyz) / (dist * dist);
+                if (length(acc) > 2.0)
+                    acc = normalize(acc) * 2.0;
 
             }
         v[idx].xyz += acc * elapsed_time;
@@ -142,9 +171,9 @@ int main()
 
     for (size_t i = 0; i < num_particles; ++i)
     {
-        positions[i].pos = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(0.7)), 0.f);
-        //positions[i].color = glm::linearRand(glm::vec4(0), glm::vec4(1));
-        positions[i].color = glm::vec4(0.2, 0.1, 0.01, 1.0);
+        //positions[i].pos = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(0.7)), 0.f);
+        positions[i].pos = glm::vec4(glm::sphericalRand(1.f), 0.f);
+        positions[i].color = glm::vec4(0.34, 0.28, 0.17, 1.0);
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
@@ -157,7 +186,8 @@ int main()
                                                         0, num_particles * sizeof (glm::vec4),
                                                         GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
     for (size_t i = 0; i < num_particles; ++i)
-        velocities[i] = glm::vec4(glm::linearRand(glm::vec3(0), glm::vec3(1)), 0);
+        velocities[i] = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(1)), 0);
+        //velocities[i] = glm::vec4(0, 0, 0, 0);
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 
@@ -170,23 +200,37 @@ int main()
     GLint status;
     glGetShaderiv(v_shader, GL_COMPILE_STATUS, &status);
     //std::cout << status << std::endl;
+    char buffer[512];
+    glGetShaderInfoLog(v_shader, 512, NULL, buffer);
+    std::cout << buffer << std::endl;
+
+    // Compiling the geometry shader
+    GLuint g_shader = glCreateShader(GL_GEOMETRY_SHADER);
+    glShaderSource(g_shader, 1, &geometry_shader, NULL);
+    glCompileShader(g_shader);
+
+    glGetShaderInfoLog(g_shader, 512, NULL, buffer);
+    std::cout << buffer << std::endl;
 
     // Compiling the fragment shader
     GLuint f_shader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(f_shader, 1, &fragment_shader, NULL);
     glCompileShader(f_shader);
 
+    glGetShaderInfoLog(f_shader, 512, NULL, buffer);
+    std::cout << buffer << std::endl;
+
     // Error checking
     glGetShaderiv(f_shader, GL_COMPILE_STATUS, &status);
-    //std::cout << status << std::endl;
+    std::cout << status << std::endl;
 
     // If error occured, print the compiling log
-    char buffer[512];
-    glGetShaderInfoLog(v_shader, 512, NULL, buffer);
+    glGetShaderInfoLog(f_shader, 512, NULL, buffer);
     std::cout << buffer << std::endl;
 
     GLuint render_program = glCreateProgram();
     glAttachShader(render_program, v_shader);
+    glAttachShader(render_program, g_shader);
     glAttachShader(render_program, f_shader);
 
     // Specifying the "output variable" for the fragment shader
@@ -194,6 +238,8 @@ int main()
 
     // Everything Specified, time to link!
     glLinkProgram(render_program);
+    glGetProgramInfoLog(render_program, 512, NULL, buffer);
+    std::cout << buffer << std::endl;
 
     /****************************************************/
     // COMPUTE PROGRAM
@@ -229,9 +275,15 @@ int main()
 
     GLint attrib_pos = glGetAttribLocation(render_program, "position");
     GLint attrib_color = glGetAttribLocation(render_program, "color");
+    std::cout << attrib_color << std::endl;
 
-    glEnableVertexAttribArray(attrib_color);
     glEnableVertexAttribArray(attrib_pos);
+    if (auto error = glGetError())
+    {
+        std::cout << error << std::endl;
+        window.close();
+    }
+    glEnableVertexAttribArray(attrib_color);
 
     glVertexAttribPointer(attrib_pos, 4, GL_FLOAT, GL_FALSE, 8*sizeof(float), 0);
     glVertexAttribPointer(attrib_color, 4, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)(4*sizeof(float)));
@@ -240,6 +292,7 @@ int main()
     glm::mat4 projection = glm::perspective(45.f, 800.f / 600.f, 1.f, 10.f);
     GLint uni_proj = glGetUniformLocation(render_program, "projection");
     glUniformMatrix4fv(uni_proj, 1, GL_FALSE, glm::value_ptr(projection));
+
 
 
     glm::mat4 view = glm::lookAt(
@@ -251,6 +304,7 @@ int main()
     glUniformMatrix4fv(uni_view, 1, GL_FALSE, glm::value_ptr(view));
     sf::Clock clock;
 
+    // Shiny!
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthFunc(GL_ALWAYS);
@@ -263,11 +317,6 @@ int main()
 
         std::cout << 1.f / elapsed.asSeconds() << std::endl;
 
-        if (auto bite = glGetError())
-        {
-            std::cout << bite << std::endl;
-            break;
-        }
         glUseProgram(compute_program);
         GLint uni_time = glGetUniformLocation(compute_program, "elapsed_time");
         glUniform1f(uni_time, elapsed.asSeconds());
@@ -285,7 +334,7 @@ int main()
         GLint uni_view = glGetUniformLocation(render_program, "view");
         //glUniformMatrix4fv(uni_view, 1, GL_FALSE, glm::value_ptr(view));
         glClearColor(0.f, 0.f, 0.f, 0.f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT);
         glEnableClientState(GL_VERTEX_ARRAY);
         glDrawArrays(GL_POINTS, 0, num_particles);
         glDisableClientState(GL_VERTEX_ARRAY);
