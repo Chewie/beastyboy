@@ -104,11 +104,12 @@ void main()
     if (flip)
     {
         for (int i = 0; i < N; i += 2)
-            if (i != idx)
             {
-                float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
-                acc += 100 * normalize(p[i].pos.xyz - p[idx].pos.xyz) / (dist * dist);
-                // Clamping for when particles are too close
+                vec3 diff = p[idx].pos.xyz - p[i].pos.xyz;
+                float distSqr = dot(diff, diff) + 0.001;
+                float distSixth = distSqr * distSqr * distSqr;
+                float invDistCube = 1.0f/sqrt(distSixth);
+                acc -= diff * 40 * invDistCube;
                 if (length(acc) > 2.0)
                     acc = normalize(acc) * 2.0;
             }
@@ -119,13 +120,15 @@ void main()
     else
     {
         for (int i = 1; i < N; i += 2)
-            if (i != idx)
             {
-                float dist = distance(p[i].pos.xyz, p[idx].pos.xyz);
-                acc += 100 * normalize(p[i].pos.xyz - p[idx].pos.xyz) / (dist * dist);
+                vec3 diff = p[idx].pos.xyz - p[i].pos.xyz;
+                float distSqr = dot(diff, diff) + 0.001;
+                float distSixth = distSqr * distSqr * distSqr;
+                float invDistCube = 1.0f/sqrt(distSixth);
+                acc -= diff * 40 * invDistCube;
+                // Clamping for when particles are too close
                 if (length(acc) > 2.0)
                     acc = normalize(acc) * 2.0;
-
             }
         v[idx].xyz += acc * elapsed_time;
         p[idx].pos.xyz += v[idx].xyz * elapsed_time;
@@ -134,12 +137,14 @@ void main()
 }
 )SHADER";
 
+// Even though we only use the xyz components, we use a vec4 because the std430 layout requires alignment
 struct vertex
 {
     glm::vec4 pos;
     glm::vec4 color;
 };
 
+// Yes, this is one gigantic main function, and it's not "object oriented", but it does the job.
 int main()
 {
     sf::ContextSettings settings;
@@ -171,8 +176,8 @@ int main()
 
     for (size_t i = 0; i < num_particles; ++i)
     {
-        //positions[i].pos = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(0.7)), 0.f);
-        positions[i].pos = glm::vec4(glm::sphericalRand(1.f), 0.f);
+        positions[i].pos = glm::vec4(glm::gaussRand(glm::vec3(0), glm::vec3(0.7)), 0.f);
+        //positions[i].pos = glm::vec4(glm::sphericalRand(1.f), 0.f);
         positions[i].color = glm::vec4(0.34, 0.28, 0.17, 1.0);
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
